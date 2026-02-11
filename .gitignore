@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager
+/.build/
+/Packages/
+.swiftpm/
+Package.resolved
+
+# Xcode
+xcuserdata/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+
+# VibeCLISwift Generated Files
+# このツールによって生成された実行ファイルやソースコードを無視します
+/*.swift
+!/Sources/**/*.swift
+!/Package.swift
+
+# ルートに生成されたバイナリを無視（VibeCLISwift自体や作成されたツール）
+/VibeCLISwift
+/FilesPacker
+/MyTool
+# 拡張子なしの実行ファイル全般を無視したい場合は慎重に設定する必要がありますが、
+# ここでは特定の生成物を指定、またはソース以外を弾く設定にします。
+
+# Documentation & Implementation Plan (Keeping these)
+# !README.md
+# !IMPLEMENTATION_PLAN.md
+
+# Logs and temporary files
+*.log
+*.nosync
+bolt_doc.txt
+LocalReplit_doc.txt
+*.tmp
