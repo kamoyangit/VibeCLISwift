@@ -42,7 +42,7 @@ swift run
 
 ## 構成
 - `Sources/VibeCLISwift/`: ソースコード
-  - `main.swift`: エントリーポイント
+  - `VibeCLISwift.swift`: エントリーポイント
   - `LLMClient.swift`: LLM API通信
   - `CodeGenerator.swift`: プロンプト生成・コード抽出
   - `Compiler.swift`: swiftc実行・エラーハンドリング

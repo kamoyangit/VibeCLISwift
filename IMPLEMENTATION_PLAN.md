@@ -16,7 +16,7 @@
 ## 3. 実装ステップ
 
 ### ステップ 1: プロジェクトの初期化
-- ディレクトリ構造の作成: `/Users/koji/Desktop/MySwift/VibeCLISwift`
+- ディレクトリ構造の作成: `/Users/koji/Developer/MySwift/VibeCLISwift`
 - `swift package init --type executable` の実行。
 - `.gitignore` の設定（生成物や一時ファイルの除外）。
 
@@ -41,7 +41,7 @@
 - 成功時: 生成されたバイナリへの実行権限付与 (`chmod +x`) とパスの表示。
 - 失敗時: エラーログを取得し、LLMに再送して修正コードを生成させる再帰ループ（最大試行回数を設定予定）。
 
-### ステップ 6: 統合とテスト (`main.swift`)
+### ステップ 6: 統合とテスト (`VibeCLISwift.swift`)
 - 全モジュールの統合。
 - 動作確認（各LLMでの疎通、単純なHello World生成、エラー時の修正挙動）。
 
@@ -51,7 +51,7 @@ VibeCLISwift/
 ├── Package.swift
 ├── Sources/
 │   └── VibeCLISwift/
-│       ├── main.swift           # エントリーポイント
+│       ├── VibeCLISwift.swift   # エントリーポイント
 │       ├── LLMClient.swift      # API通信
 │       ├── InteractiveSession.swift # ユーザー入力処理
 │       ├── CodeGenerator.swift  # プロンプト構築・コード抽出

@@ -1,0 +1,372 @@
+
+
+=== FILE: /Users/koji/Developer/MySwift/VibeCLISwift/Sources/VibeCLISwift/CodeGenerator.swift ===
+
+import Foundation
+
+class CodeGenerator {
+    func createSystemPrompt(name: String, feature: String, notes: String) -> String {
+        return """
+        You are an expert Swift engineer. Generate a single-file Swift CLI code for macOS based on the following specifications.
+        
+        1. App Name: \(name)
+        2. Feature: \(feature)
+        3. Notes: \(notes)
+        
+        Requirements:
+        - Avoid external dependencies like ArgumentParser. Use `CommandLine.arguments` to parse arguments.
+        - Must include a `--help` option to display usage instructions.
+        - Output ONLY the code. Do not include explanations.
+        - Ensure the code is complete and compilable using `swiftc`.
+        """
+    }
+    
+    func extractCode(from response: String) -> String {
+        // Basic markdown code block extraction
+        if let range = response.range(of: "```swift", options: .caseInsensitive),
+           let endRange = response.range(of: "```", options: .backwards) {
+            
+            if range.upperBound < endRange.lowerBound {
+                 let code = response[range.upperBound..<endRange.lowerBound]
+                 return String(code).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        
+        // Try generic code block
+        if let range = response.range(of: "```"),
+           let endRange = response.range(of: "```", options: .backwards) {
+               if range.upperBound < endRange.lowerBound {
+                   // Verify if the first line is language identifier
+                   let content = response[range.upperBound..<endRange.lowerBound]
+                   return String(content).trimmingCharacters(in: .whitespacesAndNewlines)
+               }
+        }
+        
+        // Assume the whole response is code if no markdown blocks found (fallback)
+        return response.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+
+=== FILE: /Users/koji/Developer/MySwift/VibeCLISwift/Sources/VibeCLISwift/Compiler.swift ===
+
+import Foundation
+
+class Compiler {
+    func compile(code: String, appName: String) throws -> String {
+        let fileManager = FileManager.default
+        let currentDir = fileManager.currentDirectoryPath
+        let sourcePath = "\(currentDir)/\(appName).swift"
+        let binaryPath = "\(currentDir)/\(appName)"
+        
+        print("Saving source to: \(sourcePath)")
+        try code.write(toFile: sourcePath, atomically: true, encoding: .utf8)
+        
+        let process = Process()
+        // Locate swiftc using /usr/bin/env or assume path. 
+        // Standard path is /usr/bin/swiftc on macOS with Xcode Command Line Tools.
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/swiftc")
+        process.arguments = [sourcePath, "-o", binaryPath]
+        
+        let pipe = Pipe()
+        process.standardError = pipe
+        process.standardOutput = pipe // Capture both for debugging
+        
+        print("Compiling...")
+        try process.run()
+        process.waitUntilExit()
+        
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        
+        if process.terminationStatus != 0 {
+            throw CompilationError.failed(output: output)
+        }
+        
+        // Ensure execution permissions
+        let chmod = Process()
+        chmod.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        chmod.arguments = ["+x", binaryPath]
+        try? chmod.run()
+        chmod.waitUntilExit()
+        
+        return binaryPath
+    }
+}
+
+enum CompilationError: Error {
+    case failed(output: String)
+}
+
+
+=== FILE: /Users/koji/Developer/MySwift/VibeCLISwift/Sources/VibeCLISwift/InteractiveSession.swift ===
+
+import Foundation
+
+class InteractiveSession {
+    func prompt(message: String, defaultValue: String? = nil) -> String {
+        print("\u{001B}[1;36m\(message)\u{001B}[0m", terminator: " ")
+        if let def = defaultValue {
+            print("[\(def)]: ", terminator: "")
+        } else {
+            print(": ", terminator: "")
+        }
+        
+        if let input = readLine(), !input.isEmpty {
+            return input
+        }
+        return defaultValue ?? ""
+    }
+    
+    func selectProvider() -> LLMProvider {
+        print("\n\u{001B}[1;32m=== Select LLM Provider ===\u{001B}[0m")
+        print("1. Ollama (Local)")
+        print("2. LM Studio (Network)")
+        print("3. DeepSeek (Cloud)")
+        
+        let choice = prompt(message: "Enter number", defaultValue: "1")
+        
+        switch choice {
+        case "2":
+            let url = prompt(message: "LM Studio API URL", defaultValue: "http://localhost:1234/v1/chat/completions")
+            let model = prompt(message: "Model Name", defaultValue: "local-model")
+            return .lmStudio(baseURL: url, model: model)
+            
+        case "3":
+            let apiKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"] ?? ""
+            if apiKey.isEmpty {
+                print("\u{001B}[1;31mWarning: DEEPSEEK_API_KEY not found in environment.\u{001B}[0m")
+                let inputKey = prompt(message: "Enter DeepSeek API Key now")
+                if inputKey.isEmpty {
+                     print("Falling back to Ollama due to missing key.")
+                     return .ollama(baseURL: "http://localhost:11434/api/chat", model: "llama3.2")
+                }
+                return .deepSeek(apiKey: inputKey, model: "deepseek-coder")
+            }
+            return .deepSeek(apiKey: apiKey, model: "deepseek-coder")
+            
+        default:
+            return .ollama(baseURL: "http://localhost:11434/api/chat", model: "llama3.2")
+        }
+    }
+    
+    func collectAppDetails() -> (name: String, feature: String, notes: String) {
+        print("\n\u{001B}[1;32m=== App Specification ===\u{001B}[0m")
+        let name = prompt(message: "1. App Name (Executive binary name)", defaultValue: "MyTool")
+        let feature = prompt(message: "2. Feature Definition (What does it do?)", defaultValue: "Prints Hello World")
+        let notes = prompt(message: "3. Additional Notes (Libraries, preferences)", defaultValue: "None")
+        return (name, feature, notes)
+    }
+}
+
+
+=== FILE: /Users/koji/Developer/MySwift/VibeCLISwift/Sources/VibeCLISwift/LLMClient.swift ===
+
+import Foundation
+
+enum LLMProvider {
+    case ollama(baseURL: String, model: String)
+    case lmStudio(baseURL: String, model: String)
+    case deepSeek(apiKey: String, model: String)
+
+    var endpoint: URL? {
+        switch self {
+        case .ollama(let url, _): return URL(string: url)
+        case .lmStudio(let url, _): return URL(string: url)
+        case .deepSeek: return URL(string: "https://api.deepseek.com/chat/completions")
+        }
+    }
+    
+    var modelName: String {
+        switch self {
+        case .ollama(_, let m): return m
+        case .lmStudio(_, let m): return m
+        case .deepSeek(_, let m): return m
+        }
+    }
+}
+
+struct ChatMessage: Codable {
+    let role: String
+    let content: String
+}
+
+struct ChatRequest: Codable {
+    let model: String
+    let messages: [ChatMessage]
+    let stream: Bool
+}
+
+struct ChatResponse: Codable {
+    struct Choice: Codable {
+        struct Message: Codable {
+            let content: String
+        }
+        let message: Message
+    }
+    let choices: [Choice]?
+    // Ollama simplified response or part of complex response, handled separately if needed
+}
+
+struct OllamaChatResponse: Codable {
+    struct Message: Codable {
+        let role: String
+        let content: String
+    }
+    let model: String
+    let message: Message?
+    let done: Bool
+}
+
+
+class LLMClient {
+    private let session = URLSession.shared
+    
+    func send(prompt: String, provider: LLMProvider, systemPrompt: String? = nil) async throws -> String {
+        guard let url = provider.endpoint else {
+            throw URLError(.badURL)
+        }
+        
+        var messages: [ChatMessage] = []
+        if let system = systemPrompt {
+            messages.append(ChatMessage(role: "system", content: system))
+        }
+        messages.append(ChatMessage(role: "user", content: prompt))
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Add Authorization header for DeepSeek
+        if case .deepSeek(let apiKey, _) = provider {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let payload = ChatRequest(model: provider.modelName, messages: messages, stream: false)
+        let jsonData = try JSONEncoder().encode(payload)
+        request.httpBody = jsonData
+        
+        let (data, response) = try await session.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            if let errorText = String(data: data, encoding: .utf8) {
+                print("API Error: \(errorText)")
+            }
+            throw URLError(.badServerResponse)
+        }
+        
+        // Debugging raw response if needed
+        // print(String(data: data, encoding: .utf8) ?? "No Data")
+
+        // Try decoding as OpenAI format (DeepSeek, LM Studio, some Ollama)
+        if let openAIResponse = try? JSONDecoder().decode(ChatResponse.self, from: data),
+           let content = openAIResponse.choices?.first?.message.content {
+            return content
+        }
+        
+        // Try decoding as Ollama format
+        if let ollamaResponse = try? JSONDecoder().decode(OllamaChatResponse.self, from: data),
+           let content = ollamaResponse.message?.content {
+            return content
+        }
+        
+        throw URLError(.cannotDecodeContentData)
+    }
+}
+
+
+=== FILE: /Users/koji/Developer/MySwift/VibeCLISwift/Sources/VibeCLISwift/VibeCLISwift.swift ===
+
+import Foundation
+
+@main
+struct VibeCLISwift {
+    static func main() async {
+        let session = InteractiveSession()
+        print("\u{001B}[1;35m✨ Welcome to VibeCLISwift ✨\u{001B}[0m")
+        
+        // Step 1: Select Provider
+        let provider = session.selectProvider()
+        
+        // Step 2: Get App Details
+        let (appName, feature, notes) = session.collectAppDetails()
+        
+        let generator = CodeGenerator()
+        let sysPrompt = generator.createSystemPrompt(name: appName, feature: feature, notes: notes)
+        
+        let client = LLMClient()
+        let compiler = Compiler()
+        
+        let currentPrompt = "Please generate the code now."
+        
+        var attempts = 0
+        let maxAttempts = 3
+        
+        print("\n\u{001B}[1;33m🧠 Generating Code with \(provider.modelName)...\u{001B}[0m")
+        
+        // Initial generation
+        var code = ""
+        do {
+            // We send our specific instructions as system prompt if possible, or prepended to user prompt
+            // My LLMClient.send(prompt: ..., systemPrompt: ...) handles it.
+            let response = try await client.send(prompt: currentPrompt, provider: provider, systemPrompt: sysPrompt)
+            code = generator.extractCode(from: response)
+        } catch {
+            print("\u{001B}[1;31mError generating code: \(error)\u{001B}[0m")
+            return
+        }
+        
+        // Compilation Loop
+        while attempts < maxAttempts {
+            do {
+                if code.isEmpty {
+                     print("Generated code was empty. Aborting.")
+                     break
+                }
+                
+                print("\n\u{001B}[1;34m🔨 Compiling (Attempt \(attempts + 1))...\u{001B}[0m")
+                let binaryPath = try compiler.compile(code: code, appName: appName)
+                print("\n\u{001B}[1;32m🚀 Success! Binary created at: \(binaryPath)\u{001B}[0m")
+                print("Try running it: \(binaryPath) --help")
+                break
+            } catch CompilationError.failed(let output) {
+                print("\u{001B}[1;31m❌ Compilation Failed:\u{001B}[0m")
+                // print(output) // Optionally print full output, or just summary
+                
+                attempts += 1
+                if attempts >= maxAttempts {
+                    print("Max attempts reached. Exiting.")
+                    print("Last compilation error: \(output)")
+                    break
+                }
+                
+                print("Retrying with LLM (Fixing errors)...")
+                
+                let fixPrompt = """
+                The following Swift code failed to compile:
+                
+                ```swift
+                \(code)
+                ```
+                
+                Compiler Output:
+                \(output)
+                
+                Please fix the errors and return ONLY the full corrected Swift code.
+                """
+                
+                do {
+                    // For retry, we treat it as a new request with the context in the prompt
+                    let response = try await client.send(prompt: fixPrompt, provider: provider, systemPrompt: "You are an expert Swift engineer fixing compilation errors.")
+                    code = generator.extractCode(from: response)
+                } catch {
+                     print("Error during retry generation: \(error)")
+                     break
+                }
+            } catch {
+                print("Unexpected error: \(error)")
+                break
+            }
+        }
+    }
+}
